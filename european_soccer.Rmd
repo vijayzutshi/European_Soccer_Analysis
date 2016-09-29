@@ -1,0 +1,383 @@
+---
+title: "Untitled"
+output: pdf_document
+---
+## Objective
+This dataset has been downloaded from Kaggle.com.  Database of European Soccer and players stats
+This includes +25,000 matches and +10,000 playersof 11 European Countries with their lead championship  for the seasons 2008 to 2016. The data includes Betting odds from up to 10 providers.  Plus detailed match events (goal types, possession, corner, cross,
+ fouls, cards etc...) for +10,000 matches. Various analysis on players and stats is being accomlished as below.
+
+# Library
+```{r echo = FALSE}
+setwd("C:/Program Files/RStudio/kaggle")
+library(RSQLite)
+library(sqldf)
+library(kernlab)
+library(caret)
+library(ggplot2)
+library(dplyr)
+```
+
+## Get the Datset
+
+
+```{r echo = FALSE}
+ # connect to the sqlite file
+  con <- dbConnect(SQLite(), dbname = "euro_soccer/database.sqlite")
+  # get the list of all tables
+  alltables <- dbListTables(con)
+  
+  # read each individual tables and store data in seperate tables
+  country_table <- dbGetQuery(con, "select * from Country")
+  league_table <- dbGetQuery(con, "select * from League")
+  match_table <- dbGetQuery(con, "select * from Match")
+  player_table <- dbGetQuery(con, "select * from Player")
+  player_stats_table <- dbGetQuery(con, "select * from Player_Stats")
+  team_table <- dbGetQuery(con, "select * from Team")
+  sqlite_seq_table <- dbGetQuery(con, "select * from sqlite_sequence")
+  dbDisconnect(con)
+```
+
+# Basic Exploratory data analysis
+```{r echo = FALSE}
+# Country and League are referenced in the Match table by their primary key (id).
+# Matches and Players are linked to other tables by foreign keys *match_api_id*
+# and *player_api_id*. These keys are different from the table's primary keys (id). 
+# Number of matches won by each country from 2008 to 2016
+
+# Analysis 1
+# Plot number of countries playing soccer since 2008 to 2016
+# and display total number of matches played by each country
+total_match_by_country <- subset(match_table, match_table$country_id > 0, 
+                                 select = id:country_id)
+agg_match_by_country <- aggregate(total_match_by_country$country_id, 
+                                  by = list(total_match_by_country$country_id), length)
+agg_match_by_country <- cbind(agg_match_by_country, country_table$name)
+ggplot(agg_match_by_country, aes(x = country_table$name, y = x)) +
+  geom_bar(stat = "identity" ,aes(fill = x)) +
+  xlab("Countries") + ylab("Match Played") +
+  ggtitle("Top 11 European Soccer Playing Countries\n from 2008 to 2016") +
+  scale_fill_continuous(name="Number of \nMatch Played") 
+# save the output to a png file  
+ggsave("num_soccer_country.png")
+# The plot displays that Spain played maximum number of matches 
+# followed by France, Italy and England
+```
+
+# Analysis 2
+```{r echo = FALSE}
+# To find the top scoring countries by goal
+# To find top leagues by goal numbers
+goalByCountry <- subset(match_table, match_table$home_team_api_id > 0, 
+                        select = c(country_id, league_id, home_team_goal))
+aggGoalByCountry <- aggregate(goalByCountry$home_team_goal,
+                              by = list(goalByCountry$country_id), sum)
+aggGoalByCountry <- cbind(aggGoalByCountry, country_table$name)
+aggGoalByCountry <- arrange(aggGoalByCountry, desc(x))
+
+
+      aggGoalByLeague <- aggregate(goalByCountry$home_team_goal,
+                              by = list(goalByCountry$league_id), sum)
+      aggGoalByLeague <- cbind(aggGoalByLeague, league_table$name)
+      aggGoalByLeague <- arrange(aggGoalByLeague, desc(x))
+      top5ByLeague <- head(aggGoalByLeague, 5)
+      ggplot(top5ByLeague, aes(x = top5ByLeague$`league_table$name`, y = x)) +
+      geom_bar(stat = "identity", aes(fill = x)) + coord_flip() +
+      xlab("Leagues") + ylab("Goals Scored") +
+      ggtitle("Top 5 European Soccer League\n from 2008 to 2016") +
+      scale_fill_continuous(name="Scores") 
+
+```
+
+
+# Analysis 3
+```{r echo = FALSE}
+# Remove null values or missing values
+# Predict outcome of the game using 3 classes
+# Home win, draw and Away win      
+homevsAwayTeam<- select(match_table, country_id, league_id, home_team_api_id, 
+                        away_team_api_id, home_team_goal, away_team_goal)
+homevsAwayTeam <- arrange(homevsAwayTeam, home_team_api_id)
+result <- c("")
+homevsAwayTeam <- cbind(homevsAwayTeam, result)
+homevsAwayTeam$result <- as.character(homevsAwayTeam$result)
+#homevsAwayTeam[,c(7)] <- sapply(homevsAwayTeam[,c(7)],as.character) 
+for(i in 1:nrow(homevsAwayTeam))
+{
+
+  if (homevsAwayTeam[i, 5] == homevsAwayTeam[i, 6])
+    {
+      homevsAwayTeam[i, 7] <- c("draw")
+    
+    } 
+     else 
+      { 
+        if (homevsAwayTeam[i, 5] > homevsAwayTeam[i, 6])
+        homevsAwayTeam[i, 7] <- c("WinHT")
+      else 
+        { 
+          if (homevsAwayTeam[i, 5] < homevsAwayTeam[i, 6])
+          homevsAwayTeam[i, 7] <- c("WinAT")
+        } 
+    }
+}  
+  
+topHomeTeam <- filter(homevsAwayTeam, result == "WinHT")
+#top5HomeTeam <- by(topHomeTeam, topHomeTeam["home_team_api_id"], head, n=5)
+countTopHomeTeam <- aggregate(topHomeTeam$home_team_api_id, 
+               by = list(topHomeTeam$home_team_api_id, topHomeTeam$country_id), length)
+countTopHomeTeam <- arrange(countTopHomeTeam, desc(x))
+#countTopHomeTeam <- cbind(countTopHomeTeam, league_table$name)
+countTopHomeTeam <- head(countTopHomeTeam, 11)
+leag_name <- c("")
+countTopHomeTeam <- cbind(countTopHomeTeam, leag_name)
+countTopHomeTeam$leag_name <- as.character(countTopHomeTeam$leag_name)
+
+
+for(j in 1:nrow(countTopHomeTeam))
+{  
+  for(d in 1:nrow(league_table))
+  { 
+    if (league_table[d, 2] == countTopHomeTeam[j, 2])
+    {
+      countTopHomeTeam[j, 4] <- league_table[d, 3]
+    }
+  }
+}
+# remove duplicate entries from Group.2 column
+countTopHomeTeam <- subset(countTopHomeTeam, !duplicated(countTopHomeTeam[, 2]))
+countTopHomeTeam <- head(countTopHomeTeam, 5)
+ggplot(countTopHomeTeam, aes(x = leag_name, y = x, fill = leag_name)) +
+      geom_bar(stat = "identity") + coord_flip() + 
+      ggtitle("Top 5 European Home Leagues\nwho have won for the season 2008 to 2016") + 
+  ylab("Number of Goals") + xlab("League Name")
+```
+
+
+# Analysis 4
+```{r echo = FALSE}
+# To find top football players
+playerStats <- select(player_stats_table, player_api_id, overall_rating, potential,
+                      penalties, vision, long_shots, finishing, heading_accuracy, 
+                      sprint_speed, strength, date_stat)
+playerStats$date_stat <- as.Date(playerStats$date_stat)
+playerStats$date_stat <- format(playerStats$date_stat, "%Y")
+playerStatsRating <- select(playerStats, player_api_id, overall_rating,
+                            penalties, date_stat, long_shots, finishing)
+#countPlayerRating <- aggregate(playerStatsRating$player_api_id,
+                           #    by = list(date_stat = playerStatsRating$date_stat,
+                          #               overall_rating = playerStatsRating$overall_rating,
+                          #               player_api_id = playerStatsRating$player_api_id), sum)
+
+#countPlayerRating <- aggregate(playerStatsRating[c("overall_rating", 
+                           #     "penalties")], 
+                          #     by = list(date = playerStatsRating$date_stat,
+                          #              api = playerStatsRating$player_api_id ), 
+                          #     sum)
+countPlayerRating <- subset(playerStatsRating, !duplicated(playerStatsRating[, 1]))
+countPlayerRating <- arrange(countPlayerRating, desc(penalties))
+countPlayerRating <- head(countPlayerRating, 10)
+player_name <- c("")
+countPlayerRating <- cbind(countPlayerRating, player_name)
+countPlayerRating$player_name <- as.character(countPlayerRating$player_name)
+
+for(k in 1:nrow(player_table))
+{  
+  for(e in 1:nrow(countPlayerRating))
+  { 
+    if (countPlayerRating[e, 1] == player_table[k, 2])
+    {
+      countPlayerRating[e, 5] <- player_table[k, 3]
+    }
+  }
+}
+countPlayerRating <- head(countPlayerRating, 5)
+ggplot(countPlayerRating, aes(x = long_shots, y = penalties, fill = penalties)) +
+  geom_bar(stat = "identity") + xlab("Player Name") + ylab("Penalties") +
+  ggtitle("Top 5 European Soccer League Players\n from 2008 to 2016 ")
+```
+
+
+# Analysis 5 
+```{r echo = FALSE}
+# It is used to model future performance
+# by using a mixed effects model to identity
+# the goal scoring ability of the players
+# a sample of 100 records are taken based
+# on players number of penalties
+playerStats1 <- select(player_stats_table, player_api_id, overall_rating, potential,
+                      penalties, vision, long_shots, finishing, heading_accuracy, 
+                      sprint_speed, strength, date_stat)
+playerStats1$date_stat <- as.Date(playerStats1$date_stat)
+playerStats1$date_stat <- format(playerStats1$date_stat, "%Y")
+playerStatsRating1 <- select(playerStats1, player_api_id, overall_rating,
+                            penalties, date_stat, long_shots, finishing)
+countPlayerShots <- subset(playerStatsRating1, !duplicated(playerStatsRating1[, 1]))
+countPlayerShots <- arrange(countPlayerShots, desc(penalties))
+countPlayerShots <- head(countPlayerShots, 25)
+player_name <- c("")
+countPlayerShots <- cbind(countPlayerShots, player_name)
+countPlayerShots$player_name <- as.character(countPlayerShots$player_name)
+
+for(a in 1:nrow(player_table))
+{  
+  for(b in 1:nrow(countPlayerShots))
+  { 
+    if (countPlayerShots[b, 1] == player_table[a, 2])
+    {
+      countPlayerShots[b, 7] <- player_table[a, 3]
+    }
+  }
+}
+plot(countPlayerShots$long_shots, countPlayerShots$finishing, type = "p",
+     xlab = "Overall Shots", ylab = "Overall Finishing",
+     main = "Model for Scoring Goal from 2008 to 2016", col = "red")
+abline(lm(countPlayerShots$long_shots ~ countPlayerShots$finishing), col = "blue")
+
+ggplot(countPlayerShots, aes(x = long_shots, y = finishing)) +
+  geom_point(stat = "identity") +
+  geom_smooth(method = "lm") + xlab("Total number of shots") + 
+  ylab("Total number of finishing goals") +
+  ggtitle("Model Showing Top 25 Players with respect\n to Goals scored from 2008 to 2016") +
+  geom_text(aes(label = countPlayerShots$player_api_id)) 
+
+```
+
+
+# Analysis 6
+```{r echo = FALSE}
+# To find top 16 players with respect to
+# vision and heading accuracy
+playerStats2 <- select(player_stats_table, player_api_id, overall_rating, potential,
+                       penalties, vision, long_shots, finishing, heading_accuracy, 
+                       sprint_speed, strength, date_stat)
+playerStats2$date_stat <- as.Date(playerStats2$date_stat)
+playerStats2$date_stat <- format(playerStats2$date_stat, "%Y")
+playerStatsRating2 <- select(playerStats2, player_api_id, overall_rating,
+                             vision, date_stat, heading_accuracy)
+
+
+countPlayervision <- subset(playerStatsRating2, !duplicated(playerStatsRating2[, 1]))
+countPlayervision <- arrange(countPlayervision, desc(overall_rating))
+countPlayervision <- head(countPlayervision, 16)
+player_name <- c("")
+countPlayervision <- cbind(countPlayervision, player_name)
+countPlayervision$player_name <- as.character(countPlayervision$player_name)
+for(g in 1:nrow(player_table))
+{  
+  for(h in 1:nrow(countPlayervision))
+  { 
+    if (countPlayervision[h, 1] == player_table[g, 2])
+    {
+      countPlayervision[h, 6] <- player_table[g, 3]
+    }
+  }
+}
+
+ggplot(countPlayervision, aes(x = vision, y = heading_accuracy)) +
+  geom_point(stat = "identity") + xlab("vision") + 
+   ylab("Heading Accuracy") +
+  ggtitle("A Plot of top 15 Players from 2008 to 2016\nbased on vision and heading accuracy") +
+  facet_wrap(~player_name)
+
+```
+
+
+# Analysis 7
+```{r echo = FALSE}
+# To find top 16 players with respect to
+# sprint speed and strength
+playerStats3 <- select(player_stats_table, player_api_id, overall_rating, potential,
+                       penalties, vision, long_shots, finishing, heading_accuracy, 
+                       sprint_speed, strength, date_stat)
+playerStats3$date_stat <- as.Date(playerStats3$date_stat)
+playerStats3$date_stat <- format(playerStats3$date_stat, "%Y")
+playerStatsRating3 <- select(playerStats3, player_api_id, overall_rating,
+                             sprint_speed, date_stat, strength)
+
+
+countPlayerstrength <- subset(playerStatsRating3, !duplicated(playerStatsRating3[, 1]))
+countPlayerstrength <- arrange(countPlayerstrength, desc(sprint_speed))
+countPlayerstrength <- head(countPlayerstrength, 16)
+player_name <- c("")
+countPlayerstrength <- cbind(countPlayerstrength, player_name)
+countPlayerstrength$player_name <- as.character(countPlayerstrength$player_name)
+for(m in 1:nrow(player_table))
+{  
+  for(n in 1:nrow(countPlayerstrength))
+  { 
+    if (countPlayerstrength[n, 1] == player_table[m, 2])
+    {
+      countPlayerstrength[n, 6] <- player_table[m, 3]
+    }
+  }
+}
+
+ggplot(countPlayerstrength, aes(x = sprint_speed, y = strength)) +
+  geom_point(stat = "identity") + xlab("sprint speed") + 
+  ylab("Strength") +
+  ggtitle("A Plot of top 15 Players from 2008 to 2016\nbased on sprint speed and strength") +
+  facet_wrap(~player_name)
+
+```
+
+
+# Analysis 8
+```{r echo = FALSE}
+# Create data partition and split data in training and testing sets
+set.seed(333)
+playerStats4 <- select(player_stats_table, player_api_id, overall_rating, potential,
+                       penalties, vision, long_shots, finishing, heading_accuracy, 
+                       sprint_speed, strength, date_stat)
+playerStats4$date_stat <- as.Date(playerStats4$date_stat)
+playerStats4$date_stat <- format(playerStats4$date_stat, "%Y")
+playerStats4 <- subset(playerStats4, !duplicated(playerStats4[, 1]))
+intrain <- createDataPartition(y = playerStats4$player_api_id, p = 0.5, list = FALSE)
+training <- playerStats4[intrain, ]
+testing <- playerStats4[-intrain, ]
+training <- na.omit(training)
+testing <- na.omit(testing)
+# fit a model
+modelFit <- train(overall_rating~., data = training, method = "glm")
+
+# final model
+fit <- train(overall_rating~., data = training, method = "glm")
+fit$finalModel
+# Prediction
+prediction <- predict(fit, newdata = testing)
+#confusionMatrix(prediction, testing$overall_rating)
+
+# Linear Regression Analysis 
+qplot(finishing, overall_rating, data = training, colour = penalties)
+lm1 <- lm(overall_rating~finishing, data = training)
+#lines(training$overall_rating, lm1$fitted.values, lwd = 3)
+# calculate RMSE on training data
+sqrt(sum((lm1$fitted.values - training$overall_rating)^2))
+# calculate RMSE on testing data
+sqrt(sum((predict(lm1, newdata = testing) - testing$overall_rating)^2))
+
+# prediction with regression
+plot(training$finishing, training$overall_rating, pch = 19, col = "blue")
+# fit linear model
+lm1 <- lm(overall_rating~finishing, data = training)
+# model fit
+lines(training$finishing, lm1$fitted.values, lwd = 3, col = "red")
+# predict a new value
+prediction <- predict(lm1, newdata = testing)
+# Plot prediction - testing and training data
+par(mfrow = c(1,2))
+plot(training$finishing, training$overall_rating, pch = 19, col = "blue", 
+     xlab = "Player Finishing", ylab = "Overall Player Rating",
+     main = "Training Data Set")
+lines(training$finishing, predict(lm1), lwd = 3, col = "red")
+plot(testing$finishing, testing$overall_rating, pch = 19, col = "blue",
+     xlab = "Player Finishing", ylab = "Overall Player Rating",
+     main = "Testing Data Set")
+lines(testing$finishing, prediction, lwd = 3, col = "red")
+# calculate RMSE on training data
+sqrt(sum((lm1$fitted.values - training$overall_rating)^2))
+# calculate RMSE on testing data
+sqrt(sum((predict(lm1, newdata = testing) - testing$overall_rating)^2))
+
+```
+
